@@ -1,0 +1,17 @@
+Portainer是Docker的图形化管理工具，提供状态显示面板、应用模板快速部署、容器镜像网络数据卷的基本操作（包括上传下载镜像，创建容器等操作）、事件日志显示、容器控制台操作、Swarm集群和服务等集中管理和操作、登录用户管理和控制等功能。功能十分全面，基本能满足中小型单位对容器管理的全部需求.
+1.搜索镜像
+    docker search portainer
+2.下载镜像
+    docker pull docker.io/portainer/portainer
+3.运行容器
+    单机版运行：
+        docker run -d -p 9000:9000 \
+        --restart=always \
+        -v /var/run/docker.sock:/var/run/docker.sock \
+        --name prtainer-test \
+        docker.io/portainer/portainer
+        该语句用宿主机9000端口关联容器中的9000端口，并给容器起名为portainer-test。执行完该命令之后，使用该机器IP:PORT即可访问Portainer。访问方式：http://IP:9000，首次登陆需要注册用户，给admin用户设置密码：
+    集群运行：
+        docker run -d -p 9000:9000 --restart=always --name prtainer-test docker.io/portainer/portainer
+        启动Portainer之后，首页还是给admin用户设置密码（这里和单机启动一样）。
+portainer对于集群的管理是分节点进行管理，在portainer面板可以看到添加的所有docker节点的情况，可进入每个节点进行容器或镜像的管理。

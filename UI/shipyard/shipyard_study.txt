@@ -1,0 +1,168 @@
+Shipyard是在Docker Swarm实现对容器、镜像、docker集群、仓库、节点进行管理的web系统。
+Shipyard功能：是一个集成管理docker容器、镜像、Registries的系统,它可以简化对横跨多个主机的Docker容器集群进行管理. 通过Web用户界面，你可以大致浏览相关信息，比如你的容器在使用多少处理器和内存资源、在运行哪些容器，还可以检查所有集群上的事件日志。
+其特性主要包括：
+    1）支持节点动态集群，可扩展节点的规模（swarm、etcd方案）
+    2）支持镜像管理、容器管理、节点管理等功能
+    3）可视化的容器管理和监控管理
+    4）在线容console终端
+Shipyard几个概念
+    1）engine
+        一个shipyard管理的docker集群可以包含一个或多个engine（引擎），一个engine就是监听tcp端口的docker daemon。shipyard管理docker daemon、images、containers完全基于Docker API，不需要做其他的修改。另外，shipyard可以对每个engine做资源限制，包括CPU和内存；因为TCP监听相比Unix socket方式会有一定的安全隐患，所以shipyard还支持通过SSL证书与docker后台进程安全通信。
+    2）rethinkdb
+        RethinkDB是一个shipyard项目的一个docker镜像，用来存放账号（account）、引擎（engine）、服务密钥（service key）、扩展元数据（extension metadata）等信息，但不会存储任何有关容器或镜像的内容。
+
+Shipyard生态
+shipyard是由shipyard控制器以及周围生态系统构成，以下按照deploy启动顺序进行介绍（下面几个就是shipyard使用脚本安装后，启动的几个容器名）
+    1）RethinkDB
+        deploy首先启动的就是RethinkDB容器，shipyard采用RethinkDB作为数据库来保存用户等信息
+    2）Discovery
+        为了使用Swarm，我们需要一个外部的密钥值存储群容器，shipyard默认是采用了etcd。
+    3）shipyard_certs
+        证书管理容器，实现证书验证功能
+    4）Proxy
+        默认情况下，Docker引擎只监听Socket，我们可以重新配置引擎使用TLS或者使用一个代理容器，转发请求从TCP到Docker监听的UNIX Socket。
+    5）Swarm Manager
+        Swarm管理器
+    6）Swarm Agent
+        Swarm代理，运行在每个节点上。
+    7）Controller
+        shipyard控制器，Remote API的实现和web的实现。
+
+部署：
+    1.下载镜像
+        [root@docker-218 ~]# docker pull rethinkdb
+        [root@docker-218 ~]# docker pull microbox/etcd
+        [root@docker-218 ~]# docker pull shipyard/docker-proxy
+        [root@docker-218 ~]# docker pull swarm
+        [root@docker-218 ~]# docker pull dockerclub/shipyard
+    2.使用脚本进行安装
+        chmod 755 shipyard-deploy
+        [root@docker-213 ~]# sh shipyard-deploy
+        Deploying Shipyard
+        -> Starting Database
+        -> Starting Discovery
+        -> Starting Cert Volume
+        -> Starting Proxy
+        -> Starting Swarm Manager
+        -> Starting Swarm Agent
+        -> Starting Controller
+        Waiting for Shipyard on 172.16.60.213:8080
+        
+        Shipyard available at http://172.16.60.213:8080
+        Username: admin Password: shipyard
+    3.[root@docker-218 ~]# docker ps
+        CONTAINER ID        IMAGE                          COMMAND                  CREATED             STATUS              PORTS                                            NAMES
+        0cc242b4d90b        dockerclub/shipyard:latest     "/bin/controller -..."   19 seconds ago      Up 15 seconds       0.0.0.0:8080->8080/tcp                           shipyard-controller
+        ce08a7f0f62f        swarm:latest                   "/swarm j --addr 1..."   20 seconds ago      Up 19 seconds       2375/tcp                                         shipyard-swarm-agent
+        9d2dd2bd5bff        swarm:latest                   "/swarm m --replic..."   20 seconds ago      Up 19 seconds       2375/tcp                                         shipyard-swarm-manager
+        3435b5e2d13a        shipyard/docker-proxy:latest   "/usr/local/bin/run"     21 seconds ago      Up 20 seconds       0.0.0.0:2375->2375/tcp                           shipyard-proxy
+        315ca39f00dd        alpine                         "sh"                     21 seconds ago      Up 21 seconds                                                        shipyard-certs
+        564f25ac8130        microbox/etcd:latest           "/bin/etcd -addr 1..."   22 seconds ago      Up 21 seconds       0.0.0.0:4001->4001/tcp, 0.0.0.0:7001->7001/tcp   shipyard-discovery
+        bff634944376        rethinkdb                      "rethinkdb --bind all"   22 seconds ago      Up 22 seconds       8080/tcp, 28015/tcp, 29015/tcp                   shipyard-rethinkdb
+        
+        最后访问http://172.16.60.218:8080,使用admin/shipyard用户名和密码登录即可.  (注意:一键部署之后,需要稍等一会儿,8080端口才能起来)
+        
+        ===================================================================================
+    4.如果想要修改web访问端口,则操作如下:
+        [root@docker-218 ~]# cat shipyard-deploy |grep 8080
+            echo "  PORT: specify the listen port for the controller (default: 8080)"
+        SHIPYARD_PORT=${PORT:-8080}
+        
+        比如将脚本中默认的8080端口改为80端口
+        [root@docker-218 ~]# sed -i 's/8080/80/g' shipyard-deploy
+        
+        然后重新部署即可
+    5.删除shipyard环境
+        [root@docker-218 ~]# cat shipyard-deploy |ACTION=remove bash            
+        Removing Shipyard
+        -> Removing Database
+        -> Removing Discovery
+        -> Removing Cert Volume
+        -> Removing Proxy
+        -> Removing Swarm Agent
+        -> Removing Swarm Manager
+        -> Removing Controller
+        Done
+        
+        [root@docker-218 ~]# docker ps
+        CONTAINER ID        IMAGE               COMMAND             CREATED             STATUS              PORTS               NAMES
+    6.添加其他节点主机
+        比如将172.16.60.220机器节点加入到上面的shipyard管理中.
+        则需要在被加入节点机器上如下操作:
+        1) 在被加入的节点上按照上面的最新地址下载shipyard-deploy
+        2) 执行下面操作 (注意下面etcd地址要写成shipyard部署机的ip地址. 首次执行时会自动下载镜像,需要等待一段时间)
+        [root@docker-220 ~]# cat shipyard-deploy| ACTION=node DISCOVERY=etcd://172.16.60.218:4001 bash
+        ......
+        Node added to Swarm: 172.16.60.220      
+        [root@docker-220 ~]# docker ps
+        CONTAINER ID        IMAGE                          COMMAND                  CREATED             STATUS              PORTS                    NAMES
+        65b7783d7e1e        swarm:latest                   "/swarm j --addr 1..."   12 seconds ago      Up 10 seconds       2375/tcp                 shipyard-swarm-agent
+        1b50c974b6e7        swarm:latest                   "/swarm m --replic..."   14 seconds ago      Up 12 seconds       2375/tcp                 shipyard-swarm-manager
+        2514cf31947b        shipyard/docker-proxy:latest   "/usr/local/bin/run"     17 seconds ago      Up 15 seconds       0.0.0.0:2375->2375/tcp   shipyard-proxy
+        bc9c79df1707        alpine                         "sh"                     19 seconds ago      Up 16 seconds      
+        
+        注意,添加节点时,上面一键脚本需要运行在被添加的节点主机上,而不是shipyard部署节点的机器上.      
+        然后登录http://172.16.60.218:8080,在"容器管理"-"主机节点"中看到添加的节点信息了.
+    7.删除节点机
+        [root@docker-220 ~]# cat shipyard-deploy |ACTION=remove bash -s
+        Removing Shipyard
+        -> Removing Database
+        -> Removing Discovery
+        -> Removing Cert Volume
+        -> Removing Proxy
+        -> Removing Swarm Agent
+        -> Removing Swarm Manager
+        -> Removing Controller
+        Done
+        [root@docker-220 ~]# docker ps
+        CONTAINER ID        IMAGE               COMMAND             CREATED             STATUS              PORTS               NAMES 
+    8.如果添加CentOS6.x系统的节要先升级kernel和docker
+        1) 升级内核
+        [root@docker-6 ~]# cat /etc/redhat-release
+        CentOS release 6.9 (Final)
+        
+        [root@docker-6 ~]# uname -r
+        2.6.32-696.el6.x86_64
+        
+        可以参考http://elrepo.org/tiki/tiki-index.php    根据系统版本选择el源
+        
+        先导入公钥
+        [root@docker-6 ~]# rpm --import https://www.elrepo.org/RPM-GPG-KEY-elrepo.org
+        [root@docker-6 ~]# rpm -Uvh http://www.elrepo.org/elrepo-release-6-8.el6.elrepo.noarch.rpm
+        
+        升级内核
+        [root@docker-6 ~]# yum --enablerepo=elrepo-kernel install kernel-lt -y
+        或者安装
+        [root@docker-6 ~]# yum --enablerepo=elrepo-kernel install kernel-ml -y
+        
+        修改Grub.conf
+        [root@docker-6 ~]# vim /etc/grub.conf
+        .....
+        default=0                     //将此项的值由1改为0
+        
+        重启系统
+        [root@docker-6 ~]# init 6
+        
+        重启后再次查看内核,发现已经升级了
+        [root@docker-6 ~]# uname -r               
+        4.4.162-1.el6.elrepo.x86_64
+        
+        2) 升级docker (如果之前部署了docker环境的话)
+        下面的docker二进制文件,百度云盘下载地址: https://pan.baidu.com/s/1AWBbF-CXfXFkIIYs5DTCmA
+        提取密码: a4r6
+        [root@docker-6 ~]# wget https://get.docker.com/builds/Linux/x86_64/docker-1.10.3
+        [root@docker-6 ~]# chmod 755 docker-1.9.1                //这是下载的docker二进制文件
+        
+        停止docker服务
+        [root@docker-6 ~]# service docker stop
+        
+        替换docker二进制文件
+        [root@docker-6 ~]# cp /usr/bin/docker /usr/bin/docker_bak
+        [root@docker-6 ~]# cp docker-1.9.1 /usr/bin/docker
+        
+        启动docker服务
+        [root@docker-6 ~]# service docker start
+        
+        下载shipyard一键部署脚本
+        [root@docker-6 ~]# chmod 755 shipyard-deploy
+        [root@docker-220 ~]# cat shipyard-deploy| ACTION=node DISCOVERY=etcd://172.16.60.218:4001 bash
